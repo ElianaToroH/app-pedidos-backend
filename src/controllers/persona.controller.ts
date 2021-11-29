@@ -1,3 +1,4 @@
+import {service} from '@loopback/core';
 import {
   Count,
   CountSchema,
@@ -16,15 +17,48 @@ import {
   del,
   requestBody,
   response,
+  RequestBodyParser,
+  HttpErrors,
 } from '@loopback/rest';
-import {Persona} from '../models';
+import {Llaves} from '../config/llaves';
+import {Credenciales, Persona} from '../models';
 import {PersonaRepository} from '../repositories';
+import {AutenticacionService} from '../services';
+const fetch = require('node-fetch');
 
 export class PersonaController {
   constructor(
     @repository(PersonaRepository)
     public personaRepository : PersonaRepository,
+    @service(AutenticacionService)
+    public servicioAutenticacion : AutenticacionService
   ) {}
+
+@post("/identificarPersona",{
+  responses:{
+    '200':{
+      description: "Identificación de usuarios"
+    }
+  }
+})
+async identificarPersona(
+  @requestBody() credenciales: Credenciales
+){
+  let p = await this.servicioAutenticacion.IdentificarPersona(credenciales.usuario, credenciales.clave);
+  if(p){
+    let token = this.servicioAutenticacion.GenerarTokenJWT(p);
+    return{
+      datos: {
+        nombre: p.nombres,
+        correo: p.correo,
+        id: p.id
+      },
+      tk: token
+    }
+  }else{
+    throw new HttpErrors[401]("Datos inválidos");
+  }
+}
 
   @post('/personas')
   @response(200, {
@@ -44,7 +78,20 @@ export class PersonaController {
     })
     persona: Omit<Persona, 'id'>,
   ): Promise<Persona> {
-    return this.personaRepository.create(persona);
+    let clave = this.servicioAutenticacion.GenerarClave();
+    let clavecifrada = this.servicioAutenticacion.CifrarClave(clave);
+    persona.clave = clavecifrada;
+    let p = await this.personaRepository.create(persona);
+
+    //Notificar al usuario
+    let destino = persona.correo;
+    let asunto = 'Registro en la plataforma.';
+    let contenido = `Hola ${persona.nombres}, su nombre de usuario es: ${persona.correo}, y su contraseña es ${clave}`;
+    fetch(`${Llaves.urlservicionotificaciones}/envio-correo?asunto=${asunto}&destino=${destino}&contenido=${contenido}`)
+      .then((data: any) => {
+        console.log(data);
+     })
+     return p;
   }
 
   @get('/personas/count')
